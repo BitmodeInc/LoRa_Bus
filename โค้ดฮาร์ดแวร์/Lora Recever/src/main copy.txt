@@ -1,0 +1,161 @@
+#include <Arduino.h>
+#include <HardwareSerial.h>
+#include <SPI.h>
+#include <LoRa.h>
+#include <WiFi.h>
+#include <WebSocketsClient.h>
+
+#define SS 5
+#define RST 4
+#define DI0 34
+
+// กำหนดข้อมูล Wi-Fi
+const char* ssid = "POCO F3";
+const char* password = "600105419";
+
+// WebSocket settings
+const char* webSocketServer = "service.lora-bus.com";
+const uint16_t webSocketPort = 443;
+const char* webSocketPath = "/lora_api/websocket";
+
+// WebSocket client object
+WebSocketsClient webSocket;
+
+// เก็บค่า Dip Switch จากเซิร์ฟเวอร์
+String dipSwitchValues[10];  // เก็บ Dip Switch ที่ดึงมาจาก Serve
+int currentDipIndex = 0;  // index ของ Dip Switch ที่จะ Broadcast
+bool dipSwitchReceived = false;  // flag สำหรับเช็คว่าได้รับค่าแล้วหรือไม่
+
+// Task handle
+TaskHandle_t LoRaTaskHandle;
+
+// ฟังก์ชันเมื่อได้รับข้อความจาก WebSocket
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+  switch (type) {
+    case WStype_DISCONNECTED:
+      Serial.println("WebSocket Disconnected.");
+      dipSwitchReceived = false;  // ถ้าตัดการเชื่อมต่อให้เตรียมรีเชื่อมใหม่
+      break;
+    case WStype_CONNECTED:
+      Serial.println("WebSocket Connected.");
+      // ขอค่า Dip Switch จากเซิร์ฟเวอร์ทันทีเมื่อเชื่อมต่อ
+      webSocket.sendTXT("request_dip_switch");
+      break;
+    case WStype_TEXT:
+      Serial.println(String((char*)payload));
+
+      // เมื่อได้รับข้อความจาก WebSocket Server
+      Serial.printf("Received message from server: %s\n", payload);
+      // ตรวจสอบว่าข้อความเป็นประเภท dip_switch หรือไม่
+      if (strstr((char *)payload, "dip_switch") != NULL) {
+        // แยกค่า dip switch ออกมา
+        String message = String((char*)payload);
+        message.replace("{\"type\":\"dip_switch\",\"values\":[\"", "");
+        message.replace("\"]}", "");
+        int index = 0;
+        int startIndex = 0;
+        int commaIndex = message.indexOf(',');
+
+        // แยกค่า dip switch ออกจาก string
+        while (commaIndex > 0) {
+          dipSwitchValues[index] = message.substring(startIndex, commaIndex);
+          startIndex = commaIndex + 1;
+          commaIndex = message.indexOf(',', startIndex);
+          index++;
+        }
+        dipSwitchValues[index] = message.substring(startIndex);
+
+        dipSwitchReceived = true;
+        currentDipIndex = 0;  // รีเซ็ต index กลับมาเริ่มต้น
+        Serial.println("Dip Switch values received and parsed.");
+      }
+      break;
+    case WStype_ERROR:
+      Serial.println("WebSocket Error occurred.");
+      dipSwitchReceived = false;  // ถ้าเกิดข้อผิดพลาดให้รีเชื่อมใหม่
+      break;
+  }
+}
+
+// Task สำหรับ Broadcast ค่า Dip Switch ผ่าน LoRa
+void LoRaTask(void *pvParameters) {
+  while (true) {
+    if (dipSwitchReceived) {
+      // Broadcast ค่า Dip Switch ปัจจุบัน
+      String message = "DIP:" + dipSwitchValues[currentDipIndex];
+      Serial.print("Broadcasting: ");
+      Serial.println(message);
+      
+      LoRa.beginPacket();
+      LoRa.print(message);
+      LoRa.endPacket();
+
+      // รอรับข้อมูลจาก LoRa Node
+      unsigned long startTime = millis();
+      bool responseReceived = false;
+      while (millis() - startTime < 5000) {  // รอประมาณ 5 วินาที
+        int packetSize = LoRa.parsePacket();
+        if (packetSize) {
+          String received = "";
+          while (LoRa.available()) {
+            received += (char)LoRa.read();
+          }
+          Serial.print("Received from LoRa Node: ");
+          Serial.println(received);
+          responseReceived = true;
+          break;
+        }
+      }
+
+      // ถ้าไม่มีการตอบกลับจาก LoRa Node ภายในเวลาที่กำหนด ให้ส่งค่า Dip Switch ถัดไป
+      if (!responseReceived) {
+        currentDipIndex = (currentDipIndex + 1) % 10;  // หมุนวนไปเรื่อย ๆ
+        Serial.println("No response, moving to next Dip Switch.");
+      }
+
+      delay(5000);  // รอ 5 วินาทีเพื่อส่งคำสั่งถัดไป
+    } else {
+      Serial.println("Waiting for Dip Switch values...");
+      delay(1000);  // ถ้ายังไม่ได้รับค่า dip switch ก็รอไปเรื่อย ๆ
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+
+  // Connecting to Wi-Fi
+  Serial.print("Connecting to Wi-Fi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("Wi-Fi Connected!");
+
+  // Initialize LoRa
+  LoRa.setPins(SS, RST, DI0);
+  
+  if (!LoRa.begin(915E6)) {  // กำหนดความถี่ (915MHz สำหรับในสหรัฐอเมริกา, 868MHz สำหรับยุโรป)
+    Serial.println("Starting LoRa failed!");
+    while (1);
+  }
+  
+  LoRa.setSpreadingFactor(12);
+  Serial.println("LoRa Receiver");
+
+  // ตั้งค่า WebSocket
+  webSocket.onEvent(webSocketEvent);
+  webSocket.beginSSL(webSocketServer, webSocketPort, webSocketPath);
+  webSocket.setReconnectInterval(5000);  // พยายาม reconnect ทุก 5 วินาที
+  // webSocket.sendTXT("request_dip_switch");
+
+  // Create the tasks
+  xTaskCreate(LoRaTask, "LoRaTask", 8192, NULL, 1, &LoRaTaskHandle);
+}
+
+void loop() {
+  // ตรวจสอบการทำงานของ WebSocket
+  webSocket.loop();
+
+}
