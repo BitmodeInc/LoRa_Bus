@@ -1,0 +1,16 @@
+FROM node:20.16.0-alpine3.20 AS base
+
+WORKDIR /app
+
+COPY . .
+
+RUN npm ci
+
+ENV PORT 3000
+ENV NODE_ENV=development
+ENV CHOKIDAR_USEPOLLING 1
+ENV WATCHPACK_POLLING 1
+
+EXPOSE 3000
+
+CMD npm run dev

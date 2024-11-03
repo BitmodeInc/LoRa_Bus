@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES6",                      // เวอร์ชันของ JavaScript ที่จะคอมไพล์ไป
+    "module": "commonjs",                 // ระบบโมดูลที่ใช้
+    "outDir": "./dist",                   // โฟลเดอร์ที่เก็บไฟล์ JavaScript ที่คอมไพล์แล้ว
+    "rootDir": "./src",                   // โฟลเดอร์ที่เก็บไฟล์ TypeScript
+    "strict": true,                       // เปิดการตรวจสอบประเภทที่เข้มงวด
+    "esModuleInterop": true,              // ใช้ร่วมกับ CommonJS โมดูล
+    "skipLibCheck": true,                 // ข้ามการตรวจสอบประเภทในไฟล์ไลบรารี
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"],                 // รวมไฟล์ TypeScript จากโฟลเดอร์ src
+  "exclude": ["node_modules"]             // ไม่รวมโฟลเดอร์ node_modules
+}
