@@ -1,0 +1,142 @@
+name: lora_bus
+version: "3.8"
+services:
+    # ===== Service =====
+    frontend:
+        container_name: B19_Frontend
+        build:
+            context: ./services/frontend
+            dockerfile: Dockerfile
+            # dockerfile: Dockerfile_Prod
+        volumes:
+            - frontend_node_modules:/app/node_modules
+            - frontend_next:/app/.next
+            - ./services/frontend:/app
+        networks:
+            - frontend
+
+    web_api:
+        container_name: B19_WebAPI
+        build:
+            context: ./services/web_api
+            dockerfile: Dockerfile
+        volumes:
+            - webapi_node_modules:/app/node_modules
+            - ./services/web_api:/app
+        networks:
+            - web_api
+        depends_on:
+            - db
+
+    admin_api:
+        container_name: B19_AdminAPI
+        build:
+            context: ./services/admin_api
+            dockerfile: Dockerfile
+        volumes:
+            - adminapi_node_modules:/app/node_modules
+            - ./services/admin_api:/app
+        networks:
+            - admin_api
+        ports:
+            - "587:587"
+            - "465:465"
+        depends_on:
+            - db
+
+    lora_api:
+        container_name: B19_LoraAPI
+        build:
+            context: ./services/lora_api
+            dockerfile: Dockerfile
+        volumes:
+            - loraapi_node_modules:/app/node_modules
+            - ./services/lora_api:/app
+        networks:
+            - lora_api
+        depends_on:
+            - db
+
+    #  ===== Database and Cache  =====
+    # redis:
+    #     image: redis:7.4-alpine3.20
+    #     container_name: B19_Redis
+    #     restart: always
+    #     volumes:
+    #         - ./redis:/usr/local/etc/redis:ro
+    #         - redis:/data
+    #     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    #     networks:
+    #         - database
+    #     ports:
+    #         - "6379:6379"
+
+    db:
+        image: mysql:9.0.1-oraclelinux9
+        container_name: B19_Mysql
+        restart: always
+        environment:
+            MYSQL_ROOT_PASSWORD: root_password
+            MYSQL_DATABASE: lorabus
+            MYSQL_USER: bleximo
+            MYSQL_PASSWORD: 12369874
+        ports:
+            - "3306:3306"
+        networks:
+            - database
+        volumes:
+            - mysql_data:/var/lib/mysql
+            - ./mysql/initdb:/docker-entrypoint-initdb.d:ro
+
+    phpmyadmin:
+        image: phpmyadmin:5.2.1-apache
+        container_name: B19_phpMyAdmin
+        environment:
+            PMA_HOST: db
+            PMA_ABSOLUTE_URI: https://lora-bus.com/phpmyadmin
+            # MYSQL_ROOT_PASSWORD: root_password
+        # ports:
+        #     - "8080:80"
+        networks:
+            - database
+        depends_on:
+            - db
+
+    # ===== Web Server and Reverse Proxy =====
+    nginx:
+        image: nginx:1.26.2-alpine3.20-slim
+        container_name: B19_Nginx
+        restart: always
+        volumes:
+            - ./nginx/config:/etc/nginx/:ro
+        networks:
+            - frontend
+            - web_api
+            - admin_api
+            - lora_api
+            - database
+            - main_revert_proxy
+        depends_on:
+            - frontend
+            - web_api
+            - admin_api
+            - lora_api
+            - phpmyadmin
+
+volumes:
+    frontend_node_modules:
+    frontend_next:
+    webapi_node_modules:
+    adminapi_node_modules:
+    loraapi_node_modules:
+    mysql_data:
+    redis:
+
+networks:
+    frontend:
+    web_api:
+    admin_api:
+    lora_api:
+    database:
+    main_revert_proxy:
+        external: true
